@@ -35,9 +35,9 @@ COPY ./requirements.txt .
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . ./src
+COPY . .
 
-RUN pip install ./src
+RUN pip install .
 
 USER 1001
 
@@ -46,4 +46,4 @@ ENV PYTHONPATH=/opt/app-root/src
 
 EXPOSE 8080
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080",  "--config", "/opt/app-root/src/gunicorn_config.py", "wsgi:application"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080",  "--config", "/opt/app-root/gunicorn_config.py", "wsgi:application"]
