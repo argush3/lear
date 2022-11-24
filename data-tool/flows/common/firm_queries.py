@@ -101,7 +101,7 @@ def get_unprocessed_firms_query(data_load_env: str):
                         and cp.flow_name = 'sp-gp-flow'
                         and cp.environment = '{data_load_env}'
             where 1 = 1
---                   and tbl_fe.event_file_types = 'FILE_FRREG'
+                   and tbl_fe.event_file_types = 'FILE_FRREG'
 --                 and tbl_fe.event_file_types like 'FILE_FRREG%'
 --                 and tbl_fe.event_file_types like '%FILE_FRREG,%FRCHG%'
 --                 and tbl_fe.event_file_types = 'CONVFMREGI_FRREG,CONVFMACP_FRMEM'
@@ -150,10 +150,10 @@ def get_unprocessed_firms_query(data_load_env: str):
 --                 and tbl_fe.event_file_types like '%FILE_FRCCH%'
 --                 and tbl_fe.event_file_types like '%FILE_FRCRG%'                   
 --                 and ((cp.processed_status is null or cp.processed_status <> 'COMPLETED')
-                   and ((cp.processed_status is null or cp.processed_status not in ('COMPLETED', 'FAILED', 'PARTIAL'))
+                   and ((cp.processed_status is null or cp.processed_status not in ('PROCESSING', 'COMPLETED', 'FAILED', 'PARTIAL'))
                    or (cp.processed_status = 'COMPLETED' and cp.last_processed_event_id <> tbl_fe.last_event_id))
             order by tbl_fe.first_event_id
-            limit 50
+            limit 1
             ;
         """
     return query
