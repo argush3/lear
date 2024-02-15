@@ -22,7 +22,7 @@ class BusinessService:
 
 
     @staticmethod
-    def fetch_business(identifier):
+    def fetch_business(identifier: str):
         """Fetches appropriate business.
 
         This can be an instance of legal entity or alternate name.
@@ -31,6 +31,27 @@ class BusinessService:
             return legal_entity
 
         if (identifier.startswith("FM") and (alternate_name := AlternateName.find_by_identifier(identifier))):
+            if alternate_name.is_owned_by_colin_entity:
+                return alternate_name
+
+            legal_entity = LegalEntity.find_by_id(alternate_name.legal_entity_id)
+            alternate_name_entity = (
+                alternate_name if legal_entity.entity_type != BusinessCommon.EntityTypes.PARTNERSHIP.value else None
+            )
+            return  alternate_name_entity
+
+        return None
+    
+    @staticmethod
+    def fetch_business_by_id(id: int):
+        """Fetches appropriate business by it's internal id.
+
+        This can be an instance of legal entity or alternate name.
+        """
+        if legal_entity := LegalEntity.find_by_internal_id(id):
+            return legal_entity
+
+        if alternate_name := AlternateName.find_by_internal_id(id):
             if alternate_name.is_owned_by_colin_entity:
                 return alternate_name
 
