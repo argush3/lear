@@ -22,11 +22,13 @@ from typing import Final, Optional
 import datedelta
 import pytz
 from flask import current_app
+from sql_versioning import Versioned
+from sqlalchemy import event
 from sqlalchemy.exc import OperationalError, ResourceClosedError
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import aliased, backref
 from sqlalchemy.sql import and_, exists, func, not_, text
-from sqlalchemy_continuum import version_class
+from sqlalchemy_continuum import make_versioned, versioning_manager
 
 from legal_api.exceptions import BusinessException
 from legal_api.utils.base import BaseEnum
@@ -36,10 +38,9 @@ from legal_api.utils.legislation_datetime import LegislationDatetime
 from .amalgamation import Amalgamation  # noqa: F401, I001, I003 pylint: disable=unused-import
 from .batch import Batch  # noqa: F401, I001, I003 pylint: disable=unused-import
 from .batch_processing import BatchProcessing  # noqa: F401, I001, I003 pylint: disable=unused-import
-from .db import db  # noqa: I001
+from .db import db, VersioningSwitchableSession  # noqa: I001
 from .party import Party
 from .share_class import ShareClass  # noqa: F401,I001,I003 pylint: disable=unused-import
-
 
 from .address import Address  # noqa: F401,I003 pylint: disable=unused-import; needed by the SQLAlchemy relationship
 from .alias import Alias  # noqa: F401 pylint: disable=unused-import; needed by the SQLAlchemy relationship
@@ -50,7 +51,7 @@ from .resolution import Resolution  # noqa: F401 pylint: disable=unused-import; 
 from .user import User  # noqa: F401,I003 pylint: disable=unused-import; needed by the SQLAlchemy backref
 
 
-class Business(db.Model):  # pylint: disable=too-many-instance-attributes,disable=too-many-public-methods
+class Business(db.Model, Versioned):  # pylint: disable=too-many-instance-attributes,disable=too-many-public-methods
     """This class manages all of the base data about a business.
 
     A business is base form of any entity that can interact directly
@@ -471,10 +472,42 @@ class Business(db.Model):  # pylint: disable=too-many-instance-attributes,disabl
             one_or_none()
         return find_in_batch_processing is not None
 
+
     def save(self):
-        """Render a Business to the local cache."""
-        db.session.add(self)
-        db.session.commit()
+        session = db.session()
+        print(f"Save - current versioning: {getattr(session, 'current_versioning', 'Not set')}")
+        print(f"Save - versioning enabled: {getattr(session, 'versioning_enabled', 'Not set')}")
+        print(f"Save - Business object: {self}, __versioned__: {getattr(self, '__versioned__', 'Not set')}")
+
+        session.add(self)
+        try:
+            session.commit()
+            print(f"Save - After commit, Business object: {self}, __versioned__: {getattr(self, '__versioned__', 'Not set')}")
+        except Exception as e:
+            print(f"Error during save: {str(e)}")
+            session.rollback()
+            raise
+
+        if session.is_new_versioning_active():
+            print('Save - new versioning')
+            if hasattr(self, '__versioned_cls__'):
+                latest_version = session.query(self.__versioned_cls__).filter(
+                    self.__versioned_cls__.id == self.id,
+                    self.__versioned_cls__.end_transaction_id.is_(None)
+                ).order_by(self.__versioned_cls__.transaction_id.desc()).first()
+                if latest_version:
+                    print(f"New versioning transaction id: {latest_version.transaction_id}")
+                else:
+                    print("No new version created")
+        elif getattr(session, 'current_versioning', None) == 'old':
+            print('Save - old versioning')
+            if hasattr(self, 'versions'):
+                if self.versions:
+                    print(f"Old versioning transaction id: {self.versions[-1].transaction_id}")
+                else:
+                    print("No old version created")
+        else:
+            print('Save - no versioning used')
 
     def delete(self):
         """Businesses cannot be deleted.
@@ -637,7 +670,13 @@ class Business(db.Model):  # pylint: disable=too-many-instance-attributes,disabl
         """Return a Business by the id assigned by the Registrar."""
         business = None
         if identifier:
-            business = cls.query.filter_by(identifier=identifier).one_or_none()
+            print(f"Searching for business with identifier: {identifier}")
+            try:
+                business = cls.query.filter_by(identifier=identifier).one_or_none()
+                print(f"Query executed successfully. Result: {business}")
+            except Exception as e:
+                print(f"Error executing query: {str(e)}")
+                raise
         return business
 
     @classmethod
@@ -686,27 +725,6 @@ class Business(db.Model):  # pylint: disable=too-many-instance-attributes,disabl
         - Return empty list if there are no alternate name entries
         """
         alternate_names = []
-
-        # Fetch aliases and related filings in a single query
-        alias_version = version_class(Alias)
-        filing_alias = aliased(Filing)
-        aliases_query = db.session.query(
-            alias_version.alias,
-            alias_version.type,
-            filing_alias.effective_date
-        ).outerjoin(
-            filing_alias, filing_alias.transaction_id == alias_version.transaction_id
-        ).filter(
-            alias_version.id.in_([a.id for a in self.aliases]),
-            alias_version.end_transaction_id is None  # noqa: E711
-        )
-
-        for alias, alias_type, effective_date in aliases_query:
-            alternate_names.append({
-                'name': alias,
-                'startDate': LegislationDatetime.format_as_legislation_date(effective_date),
-                'type': alias_type
-            })
 
         # Get SP DBA entries if not SP
         if self.legal_type != Business.LegalTypes.SOLE_PROP:
@@ -845,7 +863,6 @@ class Business(db.Model):  # pylint: disable=too-many-instance-attributes,disabl
 
         return True
 
-
 ASSOCIATION_TYPE_DESC: Final = {
     Business.AssociationTypes.CP_COOPERATIVE.value: 'Ordinary Cooperative',
     Business.AssociationTypes.CP_HOUSING_COOPERATIVE.value: 'Housing Cooperative',
@@ -854,3 +871,4 @@ ASSOCIATION_TYPE_DESC: Final = {
     Business.AssociationTypes.SP_SOLE_PROPRIETORSHIP.value: 'Sole Proprietorship',
     Business.AssociationTypes.SP_DOING_BUSINESS_AS.value: 'Sole Proprietorship (DBA)'
 }
+
